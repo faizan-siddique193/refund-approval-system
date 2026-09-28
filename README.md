@@ -46,22 +46,20 @@ graph TD
 refund_approval_system/
 ├── src/
 │   └── refund_approval_system/
-│       ├── agent/
-│       │   ├── graph.py       # LangGraph topology and state machine definition
-│       │   ├── llm.py         # LLM interaction and prompt handling
-│       │   ├── nodes.py       # Graph node implementations
-│       │   ├── state.py       # WorkflowState definition
-│       │   └── tools.py       # External dependency integrations (Order DB, Customer DB)
-│       ├── api.py             # FastAPI entrypoints for system interaction
-│       ├── database.py        # SQLite database connection and initialization
-│       ├── mock_tools.py      # Stubs simulating external API calls
-│       ├── models.py          # Pydantic data models
-│       ├── policy.py          # Deterministic rules engine
-│       └── repository.py      # SQLite data access layer
-├── tests/                     # Comprehensive Pytest suite
-│   ├── test_acceptance.py     # End-to-end acceptance tests
+│       ├── agent/         # LangGraph topology and state logic
+│       ├── api/           # FastAPI entrypoints
+│       ├── db/            # SQLite database and repository access
+│       ├── edges/         # Graph routing edges (linear, conditional, terminal)
+│       ├── models/        # Pydantic data models for typed schemas
+│       ├── nodes/         # Graph node implementations
+│       ├── prompts/       # LLM prompt templates
+│       ├── tools/         # External dependency integrations
+│       ├── policy.py      # Deterministic rules engine
+│       └── __init__.py
+├── tests/                 # Comprehensive Pytest suite
+│   ├── test_acceptance.py # End-to-end acceptance tests
 │   ├── test_api.py            
-│   ├── test_workflow.py       # State machine transitions
+│   ├── test_workflow.py   # State machine transitions
 │   └── ...
 ├── .env.example
 ├── pytest.ini
@@ -73,6 +71,7 @@ refund_approval_system/
 * **Language:** Python 3.10+
 * **Workflow Engine:** LangGraph (for stateful, checkpointed agent workflows)
 * **Web Framework:** FastAPI (for highly performant REST APIs)
+* **LLM Provider:** Groq (for extremely fast, structured inference)
 * **Data Validation:** Pydantic (for rigid state typing and LLM structured output)
 * **Testing:** Pytest (for exhaustive deterministic test coverage)
 * **Persistence:** SQLite (for zero-setup, durable audit logs and state checkpointing)
@@ -93,22 +92,24 @@ refund_approval_system/
 
 Copy `.env.example` to `.env` and configure:
 ```ini
-OPENAI_API_KEY=your_openai_api_key
-DB_PATH=refunds.db
+GROQ_API_KEY=gsk_your_groq_api_key
+LLM_MODEL=llama-3.1-70b-versatile
+DATABASE_PATH=refund_approval.db
 ```
 
 ## Running the API
 
 Start the FastAPI server:
 ```bash
-uv run uvicorn refund_approval_system.api:app --reload
+uv run uvicorn refund_approval_system.api:app --reload --port 8000
 ```
 
 ## API Endpoints
 
 * `POST /refunds` - Submit a new refund request.
 * `GET /refunds/{refund_id}` - Check the status of a refund.
-* `POST /approvals/{approval_id}/process` - Process a pending human approval.
+* `POST /approvals/{approval_id}` - Process a pending human approval.
+* `GET /refunds/{refund_id}/audit` - Fetch the audit trail for a refund.
 
 ## Example Requests
 
@@ -127,9 +128,10 @@ curl -X POST http://localhost:8000/refunds \
 
 **Process an approval:**
 ```bash
-curl -X POST http://localhost:8000/approvals/APR-XYZ/process \
+curl -X POST http://localhost:8000/approvals/APP-XYZ \
   -H "Content-Type: application/json" \
   -d '{
+    "approval_id": "APP-XYZ",
     "decision": "approved",
     "reviewer_id": "REV-01",
     "reviewer_role": "reviewer",
