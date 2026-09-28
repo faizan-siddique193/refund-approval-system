@@ -8,3 +8,15 @@ wheels/
 
 # Virtual environments
 .venv
+
+# Secrets / credentials
+.env
+
+# Database files
+*.db
+
+# Test caches
+.pytest_cache/
+
+# uv
+uv.lock.bak
