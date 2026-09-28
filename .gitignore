@@ -14,6 +14,8 @@ wheels/
 
 # Database files
 *.db
+*.db-shm
+*.db-wal
 
 # Test caches
 .pytest_cache/
