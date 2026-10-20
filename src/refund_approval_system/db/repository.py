@@ -26,13 +26,16 @@ def _now_iso() -> str:
 
 def save_approval(approval: ApprovalRequest, db_path: str) -> None:
     """Persist a new approval record (status=pending)."""
+    expires_at_str = (
+        approval.expires_at.strftime(_ISO) if getattr(approval, "expires_at", None) else None
+    )
     with get_connection(db_path) as conn:
         conn.execute(
             """
             INSERT INTO approvals
                 (approval_id, refund_id, order_id, amount, required_level,
-                 status, reviewer_id, created_at, decided_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 status, reviewer_id, created_at, decided_at, expires_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 approval.approval_id,
@@ -44,6 +47,7 @@ def save_approval(approval: ApprovalRequest, db_path: str) -> None:
                 None,
                 approval.created_at.strftime(_ISO),
                 None,
+                expires_at_str,
             ),
         )
     logger.debug(

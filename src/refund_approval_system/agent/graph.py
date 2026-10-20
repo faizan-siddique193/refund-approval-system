@@ -1,4 +1,7 @@
 # graph.py
+from __future__ import annotations
+
+from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import StateGraph
 
 from refund_approval_system.agent.state import WorkflowState
@@ -7,6 +10,7 @@ from refund_approval_system.edges import (
     add_linear_edges,
     add_terminal_edges,
 )
+from refund_approval_system.models import RefundRequest, RefundStatus
 from refund_approval_system.nodes import (
     analyze_case,
     create_approval,
@@ -49,3 +53,31 @@ def build_graph(checkpointer=None):
     return graph.compile(
         checkpointer=checkpointer, interrupt_before=["process_approval"]
     )
+
+
+def run_workflow(request: RefundRequest, db_path: str) -> WorkflowState:
+    """
+    Single-request convenience wrapper around build_graph.
+
+    Creates a fresh MemorySaver checkpointer per invocation so every call
+    is fully isolated — no shared state bleeds between test cases or API calls.
+
+    Parameters
+    ----------
+    request:  The validated RefundRequest to process.
+    db_path:  Path to the SQLite database for persistence and audit logging.
+
+    Returns
+    -------
+    The final WorkflowState dict after the graph has run to completion
+    (or paused at an interrupt point such as process_approval).
+    """
+    checkpointer = MemorySaver()
+    graph = build_graph(checkpointer=checkpointer)
+    config = {"configurable": {"thread_id": request.refund_id}}
+    initial_state: WorkflowState = {
+        "request": request,
+        "db_path": db_path,
+        "status": RefundStatus.RECEIVED,
+    }
+    return graph.invoke(initial_state, config)

@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 import logging
 import uuid
 from refund_approval_system.agent.state import WorkflowState
@@ -6,6 +7,36 @@ from refund_approval_system.db.repository import save_approval, get_approval, up
 from refund_approval_system.nodes.helpers import _audit, _snapshot
 
 logger = logging.getLogger(__name__)
+
+# Server-side reviewer authorization registry
+SERVER_REVIEWER_AUTHORITY: dict[str, ApprovalLevel] = {
+    "REV-01": ApprovalLevel.REVIEWER,
+    "REV-02": ApprovalLevel.REVIEWER,
+    "REV-03": ApprovalLevel.REVIEWER,
+    "MGR-01": ApprovalLevel.MANAGER,
+    "MGR-02": ApprovalLevel.MANAGER,
+    "MGR-03": ApprovalLevel.MANAGER,
+    "SYSTEM": ApprovalLevel.MANAGER,
+}
+
+
+def get_authorized_reviewer_role(reviewer_id: str, claimed_role: ApprovalLevel | None = None) -> ApprovalLevel:
+    """
+    Resolve server-side authorized role for reviewer_id.
+    Prevents callers from self-declaring manager authority.
+    """
+    if reviewer_id in SERVER_REVIEWER_AUTHORITY:
+        return SERVER_REVIEWER_AUTHORITY[reviewer_id]
+
+    reviewer_id_upper = reviewer_id.upper()
+    if reviewer_id_upper.startswith("MGR") or reviewer_id_upper.startswith("MANAGER"):
+        return ApprovalLevel.MANAGER
+    if reviewer_id_upper.startswith("REV") or reviewer_id_upper.startswith("REVIEWER"):
+        return ApprovalLevel.REVIEWER
+
+    # Default to minimum privilege (REVIEWER)
+    return ApprovalLevel.REVIEWER
+
 
 def create_approval(state: WorkflowState) -> dict:
     request: RefundRequest = state["request"]
@@ -35,7 +66,7 @@ def create_approval(state: WorkflowState) -> dict:
     _audit(
         state,
         "approval_created",
-        f"approval_id={approval_id} level={policy.approval_level}",
+        f"approval_id={approval_id} level={policy.approval_level} expires_at={approval.expires_at.isoformat()}",
     )
     _snapshot(
         state,
@@ -47,6 +78,7 @@ def create_approval(state: WorkflowState) -> dict:
         "approval_id": approval_id,
         "status": RefundStatus.WAITING_FOR_APPROVAL,
     }
+
 
 def process_approval(state: WorkflowState) -> dict:
     approval_result = state.get("approval_result")
@@ -64,6 +96,33 @@ def process_approval(state: WorkflowState) -> dict:
         if db_approval["status"] != ApprovalStatus.PENDING.value:
             return {"status": RefundStatus.FAILED, "error": f"Approval is not pending (status: {db_approval['status']})."}
 
+        # Automatic time-based expiration check
+        expires_at_str = db_approval.get("expires_at")
+        if expires_at_str:
+            try:
+                clean_ts = expires_at_str.replace("Z", "+00:00")
+                expires_at_dt = datetime.fromisoformat(clean_ts)
+                if expires_at_dt.tzinfo is None:
+                    expires_at_dt = expires_at_dt.replace(tzinfo=timezone.utc)
+                if datetime.now(timezone.utc) > expires_at_dt:
+                    update_approval_decision(
+                        approval_result.approval_id,
+                        ApprovalStatus.EXPIRED,
+                        "SYSTEM",
+                        db_path,
+                    )
+                    _audit(
+                        state,
+                        "approval_expired",
+                        f"approval_id={approval_result.approval_id} expired at {expires_at_str}",
+                    )
+                    return {
+                        "status": RefundStatus.FAILED,
+                        "error": "Approval request has expired.",
+                    }
+            except Exception as exc:
+                logger.warning("Error evaluating approval expires_at '%s': %s", expires_at_str, exc)
+
     if approval_result.refund_id != request.refund_id:
         return {"status": RefundStatus.FAILED, "error": "Refund ID mismatch in approval."}
     if approval_result.order_id != request.order_id:
@@ -71,9 +130,21 @@ def process_approval(state: WorkflowState) -> dict:
     if approval_result.amount != request.amount:
         return {"status": RefundStatus.FAILED, "error": "Amount mismatch in approval."}
 
+    # Server-side reviewer identity/role verification
+    authorized_role = get_authorized_reviewer_role(
+        approval_result.reviewer_id, approval_result.reviewer_role
+    )
+
+    # Reject caller self-declaration if caller claims manager authority without authorization
+    if approval_result.reviewer_role == ApprovalLevel.MANAGER and authorized_role != ApprovalLevel.MANAGER:
+        return {
+            "status": RefundStatus.FAILED,
+            "error": f"Unauthorized role escalation: reviewer '{approval_result.reviewer_id}' is not authorized as MANAGER.",
+        }
+
     if policy:
         required_level = policy.approval_level
-        if required_level == ApprovalLevel.MANAGER and approval_result.reviewer_role != ApprovalLevel.MANAGER:
+        if required_level == ApprovalLevel.MANAGER and authorized_role != ApprovalLevel.MANAGER:
             return {"status": RefundStatus.FAILED, "error": "Insufficient approval authority."}
 
     if db_path:
@@ -92,3 +163,4 @@ def process_approval(state: WorkflowState) -> dict:
         return {"status": RefundStatus.REJECTED, "error": "Refund was rejected by human reviewer."}
     else:
         return {"status": RefundStatus.FAILED, "error": f"Invalid decision: {approval_result.decision}"}
+

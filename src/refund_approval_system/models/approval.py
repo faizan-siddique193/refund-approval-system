@@ -1,8 +1,10 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from pydantic import BaseModel, Field
 
 from refund_approval_system.models.enums import ApprovalLevel, ApprovalStatus
+
+DEFAULT_APPROVAL_EXPIRY_HOURS = 24
 
 
 class ApprovalRequest(BaseModel):
@@ -13,6 +15,9 @@ class ApprovalRequest(BaseModel):
     required_level: ApprovalLevel
     status: ApprovalStatus = ApprovalStatus.PENDING
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    expires_at: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc) + timedelta(hours=DEFAULT_APPROVAL_EXPIRY_HOURS)
+    )
 
 
 class ApprovalResult(BaseModel):

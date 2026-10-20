@@ -165,3 +165,94 @@ class TestPhase4PauseResume:
         state_resumed = graph.invoke(None, config)
         assert state_resumed["status"] == RefundStatus.FAILED
         assert "Approval is not pending" in state_resumed["error"]
+
+    def test_automatic_time_based_expiry(self, db_path):
+        from datetime import datetime, timedelta, timezone
+        from refund_approval_system.db.database import get_connection
+        from refund_approval_system.db.repository import get_approval
+
+        checkpointer = MemorySaver()
+        graph = build_graph(checkpointer=checkpointer)
+
+        request = _req("REF-PH4-AUTO-EXP", 150.0)
+        config = {"configurable": {"thread_id": "thread-auto-exp"}}
+        initial_state = {"request": request, "db_path": db_path, "status": RefundStatus.RECEIVED}
+        state = graph.invoke(initial_state, config)
+
+        # Backdate expires_at to 1 hour in the past
+        past_time = (datetime.now(timezone.utc) - timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%S.%f")
+        with get_connection(db_path) as conn:
+            conn.execute(
+                "UPDATE approvals SET expires_at = ? WHERE approval_id = ?",
+                (past_time, state["approval_id"]),
+            )
+
+        approval_result = ApprovalResult(
+            approval_id=state["approval_id"],
+            decision=ApprovalStatus.APPROVED,
+            reviewer_id="REV-01",
+            reviewer_role=ApprovalLevel.REVIEWER,
+            refund_id=request.refund_id,
+            order_id=request.order_id,
+            amount=request.amount,
+        )
+
+        graph.update_state(config, {"approval_result": approval_result})
+        state_resumed = graph.invoke(None, config)
+        assert state_resumed["status"] == RefundStatus.FAILED
+        assert "expired" in state_resumed["error"].lower()
+
+        # Verify DB status transitioned to expired
+        db_record = get_approval(state["approval_id"], db_path)
+        assert db_record["status"] == ApprovalStatus.EXPIRED.value
+
+    def test_caller_self_declared_manager_role_rejected(self, db_path):
+        checkpointer = MemorySaver()
+        graph = build_graph(checkpointer=checkpointer)
+
+        request = _req("REF-PH4-SPOOF", 800.0)  # Requires Manager
+        config = {"configurable": {"thread_id": "thread-spoof"}}
+        initial_state = {"request": request, "db_path": db_path, "status": RefundStatus.RECEIVED}
+        state = graph.invoke(initial_state, config)
+
+        # Caller attempts to self-declare as MANAGER with a REVIEWER id
+        approval_result = ApprovalResult(
+            approval_id=state["approval_id"],
+            decision=ApprovalStatus.APPROVED,
+            reviewer_id="REV-01",
+            reviewer_role=ApprovalLevel.MANAGER,  # Caller self-declaration
+            refund_id=request.refund_id,
+            order_id=request.order_id,
+            amount=request.amount,
+        )
+
+        graph.update_state(config, {"approval_result": approval_result})
+        state_resumed = graph.invoke(None, config)
+        assert state_resumed["status"] == RefundStatus.FAILED
+        assert "Unauthorized role escalation" in state_resumed["error"]
+
+    def test_authorized_manager_approval_succeeds(self, db_path):
+        checkpointer = MemorySaver()
+        graph = build_graph(checkpointer=checkpointer)
+
+        request = _req("REF-PH4-MGR-OK", 800.0)  # Requires Manager
+        config = {"configurable": {"thread_id": "thread-mgr-ok"}}
+        initial_state = {"request": request, "db_path": db_path, "status": RefundStatus.RECEIVED}
+        state = graph.invoke(initial_state, config)
+
+        # Authorized manager submits approval
+        approval_result = ApprovalResult(
+            approval_id=state["approval_id"],
+            decision=ApprovalStatus.APPROVED,
+            reviewer_id="MGR-01",
+            reviewer_role=ApprovalLevel.MANAGER,
+            refund_id=request.refund_id,
+            order_id=request.order_id,
+            amount=request.amount,
+        )
+
+        graph.update_state(config, {"approval_result": approval_result})
+        state_resumed = graph.invoke(None, config)
+        assert state_resumed["status"] == RefundStatus.COMPLETED
+        assert state_resumed.get("transaction_id") is not None
+

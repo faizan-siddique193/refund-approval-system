@@ -76,7 +76,7 @@ class TestAcceptanceSuite:
         assert state["policy_result"].approval_level == ApprovalLevel.REVIEWER
 
     # F. Tool/dependency failure is handled safely.
-    @patch("refund_approval_system.tools.tools.get_order_details")
+    @patch("refund_approval_system.tools.order.get_order_details")
     def test_f_tool_failure_is_handled_safely(self, mock_get_order, db_path):
         mock_get_order.side_effect = RuntimeError("Service Unavailable")
         graph = build_graph(checkpointer=MemorySaver())

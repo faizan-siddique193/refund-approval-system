@@ -93,7 +93,7 @@ refund_approval_system/
 Copy `.env.example` to `.env` and configure:
 ```ini
 GROQ_API_KEY=gsk_your_groq_api_key
-LLM_MODEL=llama-3.1-70b-versatile
+LLM_MODEL=openai/gpt-oss-20b
 DATABASE_PATH=refund_approval.db
 ```
 
@@ -146,7 +146,7 @@ curl -X POST http://localhost:8000/approvals/APP-XYZ \
 1. **Auto-Approve:** Low-risk, low-value refunds (under $50) bypass human review and execute immediately.
 2. **Reviewer Approval:** Mid-value ($50 - $500) or mildly risky refunds pause execution and generate an approval request requiring a `REVIEWER` role.
 3. **Manager Approval:** High-value (over $500) or highly risky refunds pause execution and require a `MANAGER` role.
-4. **Execution:** Once the human mathematically signs the approval matching the request exactly, the graph resumes and executes the payment.
+4. **Execution:** Once the human submits an approval decision matching the required request parameters (`refund_id`, `order_id`, `amount`, and required role level), the graph validates the record and executes the payment.
 
 ## Policy Rules
 
@@ -164,19 +164,33 @@ The `policy.py` engine defines strict numeric rules for routing:
 
 ## Failure Handling
 
-1. **Tool/Dependency Failure:** External calls (e.g. `get_order_details`) retry automatically up to 3 times with exponential backoff. If failure persists, the workflow logs the error and safely `ESCALATES` rather than guessing missing context.
+1. **Tool/Dependency Failure:** External calls (e.g. `get_order_details`) retry automatically up to 3 times in a retry loop. If failure persists, the workflow logs the error and safely `ESCALATES` rather than guessing missing context.
 2. **Execution Failure:** If the payment gateway crashes during execution, the refund is explicitly flagged as `FAILED`. It is never falsely reported as `COMPLETED`.
 
 ## Security
 
 * **Prompt Injection Defense:** The LLM's output (`RefundDecision`) only provides intent analysis. The deterministic policy engine intercepts any LLM hallucination or prompt injection bypass attempt.
-* **Approval Tampering:** The system verifies the `amount`, `order_id`, and `refund_id` cryptographically bind to the pending approval. Expired approvals, mismatched roles, or modified amounts are rejected instantly.
+* **Approval Tampering:** The system deterministically verifies that `amount`, `order_id`, and `refund_id` strictly match the pending database record through parameter equality checks. Expired approvals, insufficient roles, or modified amounts are rejected instantly.
 * **Duplicate Execution:** A final check on the SQLite DB ensures a refund cannot be executed twice.
+
+## Documentation & Verification Evidence
+
+* **Technical Architecture & Design Document:** See [`technicalwriting.md`](technicalwriting.md) for the complete 2–4 page architectural whitepaper detailing the LangGraph topology, deterministic policy engine, approval hardening, and security model.
+* **Acceptance Scenarios A–G Traces:** See [`docs/scenario_traces.md`](docs/scenario_traces.md) for full execution traces, inputs, outputs, state transitions, and audit logs for all 7 evaluation scenarios.
+* **Test Dataset (JSON):** See [`docs/test_data.json`](docs/test_data.json) for ready-to-use JSON payloads for API requests and human approvals covering Scenarios A–G.
 
 ## Testing
 
-The system boasts 160+ unit, integration, and acceptance tests. 
-Run the entire suite via:
+The system boasts 170 unit, integration, and acceptance tests covering policy logic, repository transactions, approval pause/resume, and API endpoints.
+
+**Run the full Pytest test suite:**
 ```bash
 uv run pytest
 ```
+
+**Run the Acceptance Scenario Runner (A–G) directly:**
+```bash
+python -X utf8 docs/test_scenarios.py
+```
+
+

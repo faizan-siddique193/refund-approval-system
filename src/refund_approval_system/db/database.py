@@ -42,7 +42,8 @@ def init_db(db_path: str = DEFAULT_DB_PATH) -> None:
                 status        TEXT NOT NULL DEFAULT 'pending',
                 reviewer_id   TEXT,
                 created_at    TEXT NOT NULL,
-                decided_at    TEXT
+                decided_at    TEXT,
+                expires_at    TEXT
             );
 
             CREATE TABLE IF NOT EXISTS audit_events (
@@ -69,4 +70,9 @@ def init_db(db_path: str = DEFAULT_DB_PATH) -> None:
             );
             """
         )
+        try:
+            conn.execute("ALTER TABLE approvals ADD COLUMN expires_at TEXT")
+        except sqlite3.OperationalError:
+            pass  # column already exists or table was freshly created
     logger.info("Database initialised successfully")
+

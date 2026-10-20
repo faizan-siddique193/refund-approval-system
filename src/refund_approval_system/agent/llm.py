@@ -71,7 +71,7 @@ def _real_llm_analyze(
         from refund_approval_system.prompts.analyze import get_analyze_prompt
 
         model = ChatGroq(
-            model=os.getenv("LLM_MODEL", "llama-3.1-70b-versatile"),
+            model=os.getenv("LLM_MODEL", "openai/gpt-oss-20b"),
             temperature=0,
             api_key=api_key,  # explicit, no ambiguity
         )

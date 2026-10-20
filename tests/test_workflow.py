@@ -90,7 +90,7 @@ class TestAutoApprove:
 
     def test_no_approval_id_created(self, db_path):
         state = run_workflow(_req("REF-AA-4", 10.0), db_path)
-        assert state["approval_id"] is None
+        assert state.get("approval_id") is None
 
     def test_risk_flags_empty(self, db_path):
         state = run_workflow(_req("REF-AA-5", 10.0), db_path)

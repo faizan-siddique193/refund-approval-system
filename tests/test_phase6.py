@@ -27,7 +27,7 @@ def _req(
     )
 
 class TestPhase6Hardening:
-    @patch("refund_approval_system.tools.tools.get_order_details")
+    @patch("refund_approval_system.tools.order.get_order_details")
     def test_tool_failure_retry_and_escalate(self, mock_get_order, db_path):
         mock_get_order.side_effect = RuntimeError("Order service down")
         
